@@ -5,6 +5,6 @@
     { "type": "Input.Text", "id": "comment" }
   ],
   "actions": [
-    { "type": "Action.Submit", "title": "Save", "id": "save" }
+    { "type": "Action.Submit", "title": "{{i18n:card.action.save}}", "id": "save" }
   ]
 }

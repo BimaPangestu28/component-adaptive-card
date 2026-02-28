@@ -271,6 +271,7 @@ mod tests {
                 ..Default::default()
             },
             node_id: Some("node-1".to_string()),
+            locale: None,
             payload: Value::Null,
             session: Value::Null,
             state: Value::Null,

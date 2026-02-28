@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use crate::asset_resolver::resolve_with_host;
 use crate::error::ComponentError;
 use crate::expression::{ExpressionEngine, SimpleExpressionEngine, stringify_value};
+use crate::i18n;
 use crate::model::{
     AdaptiveCardInvocation, CardFeatureSummary, CardSource, CardSpec, ValidationIssue,
 };
@@ -36,15 +37,17 @@ pub struct RenderOutcome {
 }
 
 pub fn render_card(inv: &AdaptiveCardInvocation) -> Result<RenderOutcome, ComponentError> {
+    let locale = i18n::resolve_locale(inv);
     let mut summary = BindingSummary::default();
     let (mut card, asset_resolution) = resolve_card(inv)?;
+    apply_i18n_markers(&mut card, &locale);
     apply_handlebars(&mut card, inv, &mut summary)?;
     let ctx = BindingContext::from_invocation(inv);
     let engine = SimpleExpressionEngine;
     apply_bindings(&mut card, &ctx, &engine, &mut summary)?;
 
     let features = analyze_features(&card);
-    let validation_issues = validate_card(&card);
+    let validation_issues = validate_card(&card, &locale);
 
     Ok(RenderOutcome {
         card,
@@ -358,6 +361,47 @@ where
         }
     }
     Some(current.clone())
+}
+
+fn apply_i18n_markers(value: &mut Value, locale: &str) {
+    match value {
+        Value::String(text) => {
+            *text = replace_i18n_tokens(text, locale);
+        }
+        Value::Array(items) => {
+            for item in items {
+                apply_i18n_markers(item, locale);
+            }
+        }
+        Value::Object(map) => {
+            for entry in map.values_mut() {
+                apply_i18n_markers(entry, locale);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn replace_i18n_tokens(text: &str, locale: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let Some(start) = rest.find("{{i18n:") else {
+            output.push_str(rest);
+            break;
+        };
+        output.push_str(&rest[..start]);
+        let token_start = start + "{{i18n:".len();
+        let after_start = &rest[token_start..];
+        let Some(end) = after_start.find("}}") else {
+            output.push_str(&rest[start..]);
+            break;
+        };
+        let key = after_start[..end].trim();
+        output.push_str(&i18n::t(locale, key));
+        rest = &after_start[end + 2..];
+    }
+    output
 }
 
 fn apply_bindings(
@@ -695,12 +739,13 @@ pub fn analyze_features(card: &Value) -> CardFeatureSummary {
     summary
 }
 
-pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
+pub fn validate_card(card: &Value, locale: &str) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
     if !card.is_object() {
         issues.push(ValidationIssue {
             code: "invalid-root".into(),
-            message: "Card must be a JSON object".into(),
+            msg_key: Some("validation.card.invalid_root".into()),
+            message: i18n::t(locale, "validation.card.invalid_root"),
             path: "/".into(),
         });
         return issues;
@@ -710,24 +755,40 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
     if type_value != Some("AdaptiveCard") {
         issues.push(ValidationIssue {
             code: "invalid-type".into(),
-            message: "Root type must be AdaptiveCard".into(),
+            msg_key: Some("validation.card.invalid_type".into()),
+            message: i18n::t(locale, "validation.card.invalid_type"),
             path: "/type".into(),
         });
     }
     if card.get("version").is_none() {
         issues.push(ValidationIssue {
             code: "missing-version".into(),
-            message: "AdaptiveCard must include a version".into(),
+            msg_key: Some("validation.card.missing_version".into()),
+            message: i18n::t(locale, "validation.card.missing_version"),
             path: "/version".into(),
         });
     }
 
     let mut input_ids = HashSet::new();
 
-    fn push_issue(path: &str, code: &str, message: &str, issues: &mut Vec<ValidationIssue>) {
+    fn push_issue(
+        locale: &str,
+        path: &str,
+        code: &str,
+        fallback_message: &str,
+        issues: &mut Vec<ValidationIssue>,
+    ) {
+        let msg_key = format!("validation.card.{code}");
+        let message = i18n::t(locale, &msg_key);
+        let message = if message == msg_key {
+            fallback_message.to_string()
+        } else {
+            message
+        };
         issues.push(ValidationIssue {
             code: code.to_string(),
-            message: message.to_string(),
+            msg_key: Some(msg_key),
+            message,
             path: path.to_string(),
         });
     }
@@ -735,6 +796,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
     fn visit(
         value: &Value,
         path: &str,
+        locale: &str,
         issues: &mut Vec<ValidationIssue>,
         input_ids: &mut HashSet<String>,
         action_ids: &mut HashSet<String>,
@@ -743,7 +805,13 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
             Value::Object(map) => {
                 let kind = map.get("type").and_then(|v| v.as_str()).unwrap_or_default();
                 if kind.starts_with("Input.") && !map.contains_key("id") {
-                    push_issue(path, "missing-id", "Inputs must include an id", issues);
+                    push_issue(
+                        locale,
+                        path,
+                        "missing-id",
+                        "Inputs must include an id",
+                        issues,
+                    );
                 }
                 if kind.starts_with("Input.")
                     && let Some(id) = map.get("id").and_then(|v| v.as_str())
@@ -751,6 +819,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                     let inserted = input_ids.insert(id.to_string());
                     if !inserted {
                         push_issue(
+                            locale,
                             path,
                             "duplicate-id",
                             "Input ids should be unique within the card",
@@ -763,13 +832,14 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                         && !action_ids.insert(id.to_string())
                     {
                         push_issue(
+                            locale,
                             path,
                             "duplicate-action-id",
                             "Action ids should be unique within the card",
                             issues,
                         );
                     }
-                    validate_action(map, path, issues);
+                    validate_action(map, path, locale, issues);
                 }
                 match kind {
                     "Input.ChoiceSet" => {
@@ -777,6 +847,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                             if let Some(arr) = choices.as_array() {
                                 if arr.is_empty() {
                                     push_issue(
+                                        locale,
                                         path,
                                         "empty-choices",
                                         "Input.ChoiceSet must include at least one choice",
@@ -794,6 +865,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                                             .unwrap_or(false)
                                 }) {
                                     push_issue(
+                                        locale,
                                         path,
                                         "invalid-choice",
                                         "Choices must include non-empty title and value",
@@ -802,6 +874,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                                 }
                             } else {
                                 push_issue(
+                                    locale,
                                     path,
                                     "invalid-choices",
                                     "Input.ChoiceSet choices must be an array",
@@ -810,6 +883,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                             }
                         } else {
                             push_issue(
+                                locale,
                                 path,
                                 "missing-choices",
                                 "Input.ChoiceSet must include choices",
@@ -825,6 +899,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                             .is_empty()
                         {
                             push_issue(
+                                locale,
                                 path,
                                 "missing-title",
                                 "Input.Toggle should include a title",
@@ -839,6 +914,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                         ) && min > max
                         {
                             push_issue(
+                                locale,
                                 path,
                                 "invalid-range",
                                 "Input.Number min must be <= max",
@@ -850,6 +926,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                         if let Some(columns) = map.get("columns") {
                             if !columns.is_array() {
                                 push_issue(
+                                    locale,
                                     path,
                                     "invalid-columns",
                                     "ColumnSet columns must be an array",
@@ -857,6 +934,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                                 );
                             } else if columns.as_array().map(|c| c.is_empty()).unwrap_or(false) {
                                 push_issue(
+                                    locale,
                                     path,
                                     "empty-columns",
                                     "ColumnSet columns must not be empty",
@@ -869,6 +947,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                         if let Some(sources) = map.get("sources") {
                             if !sources.is_array() {
                                 push_issue(
+                                    locale,
                                     path,
                                     "invalid-sources",
                                     "Media sources must be an array",
@@ -876,6 +955,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                                 );
                             } else if sources.as_array().map(|s| s.is_empty()).unwrap_or(false) {
                                 push_issue(
+                                    locale,
                                     path,
                                     "missing-sources",
                                     "Media must include at least one source",
@@ -894,6 +974,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                                 .unwrap_or(false)
                             {
                                 push_issue(
+                                    locale,
                                     path,
                                     "invalid-source",
                                     "Media sources must include non-empty url",
@@ -902,6 +983,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                             }
                         } else {
                             push_issue(
+                                locale,
                                 path,
                                 "missing-sources",
                                 "Media must include sources",
@@ -913,20 +995,25 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                 }
                 for (key, value) in map {
                     let child_path = format!("{}/{}", path, key);
-                    visit(value, &child_path, issues, input_ids, action_ids);
+                    visit(value, &child_path, locale, issues, input_ids, action_ids);
                 }
             }
             Value::Array(items) => {
                 for (idx, item) in items.iter().enumerate() {
                     let child_path = format!("{}/{}", path, idx);
-                    visit(item, &child_path, issues, input_ids, action_ids);
+                    visit(item, &child_path, locale, issues, input_ids, action_ids);
                 }
             }
             _ => {}
         }
     }
 
-    fn validate_action(map: &Map<String, Value>, path: &str, issues: &mut Vec<ValidationIssue>) {
+    fn validate_action(
+        map: &Map<String, Value>,
+        path: &str,
+        locale: &str,
+        issues: &mut Vec<ValidationIssue>,
+    ) {
         let kind = map.get("type").and_then(|v| v.as_str()).unwrap_or_default();
         match kind {
             "Action.OpenUrl" => {
@@ -937,6 +1024,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                     .unwrap_or(false)
                 {
                     push_issue(
+                        locale,
                         path,
                         "missing-url",
                         "Action.OpenUrl must include a url",
@@ -947,6 +1035,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
             "Action.Execute" => {
                 if map.get("verb").and_then(|v| v.as_str()).is_none() {
                     push_issue(
+                        locale,
                         path,
                         "missing-verb",
                         "Action.Execute should include a verb",
@@ -959,6 +1048,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                     .unwrap_or(false)
                 {
                     push_issue(
+                        locale,
                         path,
                         "invalid-data",
                         "Action.Execute data should be an object when present",
@@ -969,6 +1059,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
             "Action.ShowCard" => {
                 if !map.contains_key("card") {
                     push_issue(
+                        locale,
                         path,
                         "missing-card",
                         "Action.ShowCard must include a card",
@@ -979,6 +1070,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                     && !card_value.is_object()
                 {
                     push_issue(
+                        locale,
                         path,
                         "invalid-card",
                         "Action.ShowCard card must be an object",
@@ -989,6 +1081,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
             "Action.ToggleVisibility" => {
                 if !map.contains_key("targetElements") {
                     push_issue(
+                        locale,
                         path,
                         "missing-target-elements",
                         "Action.ToggleVisibility must include targetElements",
@@ -1001,6 +1094,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
                     .unwrap_or(false)
                 {
                     push_issue(
+                        locale,
                         path,
                         "empty-target-elements",
                         "Action.ToggleVisibility targetElements must not be empty",
@@ -1016,6 +1110,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
         && !body.is_array()
     {
         push_issue(
+            locale,
             "/body",
             "invalid-body",
             "body must be an array",
@@ -1026,6 +1121,7 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
         && !actions.is_array()
     {
         push_issue(
+            locale,
             "/actions",
             "invalid-actions",
             "actions must be an array",
@@ -1034,6 +1130,13 @@ pub fn validate_card(card: &Value) -> Vec<ValidationIssue> {
     }
 
     let mut action_ids = HashSet::new();
-    visit(card, "", &mut issues, &mut input_ids, &mut action_ids);
+    visit(
+        card,
+        "",
+        locale,
+        &mut issues,
+        &mut input_ids,
+        &mut action_ids,
+    );
     issues
 }

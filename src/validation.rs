@@ -41,11 +41,23 @@ pub fn validate_invocation_schema(value: &Value) -> Vec<ValidationIssue> {
 }
 
 fn map_schema_error(error: &jsonschema::ValidationError) -> ValidationIssue {
-    let code = match error.kind() {
-        ValidationErrorKind::Required { .. } => "AC_INVOCATION_MISSING_FIELD",
-        ValidationErrorKind::Type { .. } => "AC_INVOCATION_INVALID_TYPE",
-        ValidationErrorKind::Enum { .. } => "AC_INVOCATION_INVALID_ENUM",
-        _ => "AC_INVOCATION_SCHEMA_ERROR",
+    let (code, msg_key) = match error.kind() {
+        ValidationErrorKind::Required { .. } => (
+            "AC_INVOCATION_MISSING_FIELD",
+            "validation.invocation.missing_field",
+        ),
+        ValidationErrorKind::Type { .. } => (
+            "AC_INVOCATION_INVALID_TYPE",
+            "validation.invocation.invalid_type",
+        ),
+        ValidationErrorKind::Enum { .. } => (
+            "AC_INVOCATION_INVALID_ENUM",
+            "validation.invocation.invalid_enum",
+        ),
+        _ => (
+            "AC_INVOCATION_SCHEMA_ERROR",
+            "validation.invocation.schema_error",
+        ),
     };
     let raw_path = error.instance_path().to_string();
     let path = if raw_path.is_empty() {
@@ -55,6 +67,7 @@ fn map_schema_error(error: &jsonschema::ValidationError) -> ValidationIssue {
     };
     ValidationIssue {
         code: code.to_string(),
+        msg_key: Some(msg_key.to_string()),
         message: error.to_string(),
         path,
     }

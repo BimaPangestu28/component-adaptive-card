@@ -1,6 +1,7 @@
 use component_adaptive_card::{
-    AdaptiveCardInvocation, CardInteraction, CardInteractionType, CardSource, CardSpec,
-    InvocationMode, ValidationMode, handle_invocation, register_host_asset_callback,
+    AdaptiveCardInvocation, CanonicalInvocationEnvelope, CardInteraction, CardInteractionType,
+    CardSource, CardSpec, InvocationMode, ValidationMode, handle_invocation,
+    register_host_asset_callback,
 };
 use serde_json::json;
 #[cfg(not(target_arch = "wasm32"))]
@@ -17,6 +18,7 @@ fn base_invocation(card: serde_json::Value) -> AdaptiveCardInvocation {
             asset_registry: None,
         },
         node_id: None,
+        locale: None,
         payload: json!({}),
         session: json!({}),
         state: json!({}),
@@ -24,6 +26,29 @@ fn base_invocation(card: serde_json::Value) -> AdaptiveCardInvocation {
         mode: InvocationMode::RenderAndValidate,
         validation_mode: ValidationMode::Warn,
         envelope: None,
+    }
+}
+
+fn envelope_with_locale(locale: &str) -> CanonicalInvocationEnvelope {
+    CanonicalInvocationEnvelope {
+        ctx: greentic_interfaces_guest::component_v0_6::node::TenantCtx {
+            tenant_id: "tenant".to_string(),
+            team_id: None,
+            user_id: None,
+            env_id: "dev".to_string(),
+            trace_id: "trace".to_string(),
+            correlation_id: "corr".to_string(),
+            deadline_ms: 0,
+            attempt: 1,
+            idempotency_key: None,
+            i18n_id: locale.to_string(),
+        },
+        flow_id: "flow".to_string(),
+        step_id: "step".to_string(),
+        component_id: "ai.greentic.component-adaptive-card".to_string(),
+        attempt: 1,
+        payload_cbor: Vec::new(),
+        metadata_cbor: None,
     }
 }
 
@@ -119,6 +144,7 @@ fn asset_render_loads_card() {
         card_source: CardSource::Asset,
         card_spec: spec,
         node_id: None,
+        locale: None,
         payload: json!({}),
         session: json!({}),
         state: json!({}),
@@ -160,6 +186,7 @@ fn catalog_resolution_uses_env_mapping() {
             ..Default::default()
         },
         node_id: None,
+        locale: None,
         payload: json!({}),
         session: json!({}),
         state: json!({}),
@@ -384,6 +411,7 @@ fn host_asset_registry_resolves_assets() {
             ..Default::default()
         },
         node_id: None,
+        locale: None,
         payload: json!({}),
         session: json!({}),
         state: json!({}),
@@ -396,4 +424,72 @@ fn host_asset_registry_resolves_assets() {
     let result = handle_invocation(invocation).expect("host registry");
     let card = result.rendered_card.expect("card should render");
     assert_eq!(card["type"], "AdaptiveCard");
+}
+
+#[test]
+fn i18n_marker_prefers_invocation_locale_over_session_and_envelope() {
+    let card = json!({
+        "type": "AdaptiveCard",
+        "version": "1.6",
+        "actions": [
+            { "type": "Action.Submit", "title": "{{i18n:card.action.save}}", "id": "save" }
+        ]
+    });
+    let mut invocation = base_invocation(card);
+    invocation.locale = Some("en-GB".to_string());
+    invocation.session = json!({ "locale": "ar" });
+    invocation.envelope = Some(envelope_with_locale("ar"));
+
+    let result = handle_invocation(invocation).expect("render should succeed");
+    let rendered = result.rendered_card.expect("card should render");
+    assert_eq!(rendered["actions"][0]["title"], "Save (UK)");
+}
+
+#[test]
+fn i18n_marker_uses_session_locale_when_invocation_locale_missing() {
+    let card = json!({
+        "type": "AdaptiveCard",
+        "version": "1.6",
+        "actions": [
+            { "type": "Action.Submit", "title": "{{i18n:card.action.save}}", "id": "save" }
+        ]
+    });
+    let mut invocation = base_invocation(card);
+    invocation.session = json!({ "locale": "ar" });
+
+    let result = handle_invocation(invocation).expect("render should succeed");
+    let rendered = result.rendered_card.expect("card should render");
+    assert_eq!(rendered["actions"][0]["title"], "حفظ");
+}
+
+#[test]
+fn i18n_marker_uses_envelope_locale_when_others_missing() {
+    let card = json!({
+        "type": "AdaptiveCard",
+        "version": "1.6",
+        "actions": [
+            { "type": "Action.Submit", "title": "{{i18n:card.action.save}}", "id": "save" }
+        ]
+    });
+    let mut invocation = base_invocation(card);
+    invocation.envelope = Some(envelope_with_locale("en-GB"));
+
+    let result = handle_invocation(invocation).expect("render should succeed");
+    let rendered = result.rendered_card.expect("card should render");
+    assert_eq!(rendered["actions"][0]["title"], "Save (UK)");
+}
+
+#[test]
+fn runtime_errors_emit_msg_key_and_localized_message() {
+    let input = serde_json::json!({
+        "locale": "en-GB",
+        "payload": {
+            "card_source": "inline",
+            "card_spec": {}
+        }
+    });
+    let output = component_adaptive_card::handle_message("card", &input.to_string());
+    let parsed: serde_json::Value = serde_json::from_str(&output).expect("error payload");
+    assert_eq!(parsed["error"]["msg_key"], "errors.invalid_input");
+    assert_eq!(parsed["error"]["message"], "Invalid input (UK)");
 }
