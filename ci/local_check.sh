@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+echo "Prefetching canonical WIT sources..."
+./ci/prefetch_canonical_wit.sh
+
 echo "Running cargo fmt..."
 cargo fmt --all -- --check
 

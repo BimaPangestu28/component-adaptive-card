@@ -25,6 +25,8 @@ jobs:
         with:
           toolchain: 1.91.0
           targets: wasm32-wasip2
+      - name: Prefetch canonical WIT sources
+        run: ./ci/prefetch_canonical_wit.sh
       - name: Restore cargo binaries cache
         uses: actions/cache/restore@v4
         with:

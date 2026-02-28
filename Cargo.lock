@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "component-adaptive-card"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "blake3",
  "greentic-interfaces-guest",
@@ -463,9 +463,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types"
-version = "0.4.49"
+version = "0.4.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebff52a24951f9c2e4b114623b1f4a34605b8c2b5b85debe474bdb7c81d78831"
+checksum = "ec967ebd301975cb738490d9d8267ef4064c7aff9dbdf5bfad8aaf0203cdfd9e"
 dependencies = [
  "anyhow",
  "blake3",
@@ -668,9 +668,9 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "js-sys"
-version = "0.3.90"
+version = "0.3.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14dc6f6450b3f6d4ed5b16327f38fed626d375a886159ca555bd7822c0c3a5a6"
+checksum = "b49715b7073f385ba4bc528e5747d02e66cb39c6146efb66b781f131f0fb399c"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -678,9 +678,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.41.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9320368abda84a3aad44953d61e70515681fe43ae94529dff5567e0215b88438"
+checksum = "2dcfbe6df48e0121219eefc8d6a30b872ac2769c7896454bda06f7b64129fa22"
 dependencies = [
  "ahash",
  "bytecount",
@@ -1012,9 +1012,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.41.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5773259506800a8c6ef38df3674b061c62c5941162507891ff8b580e93d954e"
+checksum = "37add1aa1d619a975521d262d09f100f1f767791c9386c03679450f30acd78c1"
 dependencies = [
  "ahash",
  "fluent-uri",
@@ -1362,9 +1362,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.113"
+version = "0.2.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60722a937f594b7fde9adb894d7c092fc1bb6612897c46368d18e7a20208eff2"
+checksum = "6532f9a5c1ece3798cb1c2cfdba640b9b3ba884f5db45973a6f442510a87d38e"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -1375,9 +1375,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.113"
+version = "0.2.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fac8c6395094b6b91c4af293f4c79371c163f9a6f56184d2c9a85f5a95f3950"
+checksum = "18a2d50fcf105fb33bb15f00e7a77b772945a2ee45dcf454961fd843e74c18e6"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -1385,9 +1385,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.113"
+version = "0.2.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3fabce6159dc20728033842636887e4877688ae94382766e00b180abac9d60"
+checksum = "03ce4caeaac547cdf713d280eda22a730824dd11e6b8c3ca9e42247b25c631e3"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -1398,9 +1398,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.113"
+version = "0.2.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de0e091bdb824da87dc01d967388880d017a0a9bc4f3bdc0d86ee9f9336e3bb5"
+checksum = "75a326b8c223ee17883a4251907455a2431acc2791c98c26279376490c378c16"
 dependencies = [
  "unicode-ident",
 ]
