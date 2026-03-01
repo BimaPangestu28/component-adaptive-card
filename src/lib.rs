@@ -20,8 +20,9 @@ use greentic_types::cbor::canonical;
 use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
 #[cfg(target_arch = "wasm32")]
 use greentic_types::schemas::component::v0_6_0::{
-    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentQaSpec, ComponentRunInput,
-    ComponentRunOutput, I18nText, QaMode as QaModeModel, schema_hash,
+    ChoiceOption, ComponentDescribe, ComponentInfo, ComponentOperation, ComponentQaSpec,
+    ComponentRunInput, ComponentRunOutput, I18nText, QaMode as QaModeModel, Question, QuestionKind,
+    schema_hash,
 };
 use once_cell::sync::Lazy;
 
@@ -165,32 +166,25 @@ impl component_qa::Guest for Component {
             QaMode::Update => ("update", QaModeModel::Update),
             QaMode::Remove => ("remove", QaModeModel::Remove),
         };
+        let questions = match mode {
+            QaMode::Default | QaMode::Setup | QaMode::Update => qa_card_questions(),
+            QaMode::Remove => Vec::new(),
+        };
         encode_cbor(&ComponentQaSpec {
             mode: spec_mode,
             title: I18nText::new(format!("qa.{mode_key}.title"), None),
             description: Some(I18nText::new(format!("qa.{mode_key}.description"), None)),
-            questions: Vec::new(),
+            questions,
             defaults: BTreeMap::new(),
         })
     }
 
-    fn apply_answers(_mode: QaMode, current_config: Vec<u8>, answers: Vec<u8>) -> Vec<u8> {
-        let mut merged = match decode_cbor::<serde_json::Value>(&current_config)
-            .unwrap_or_else(|_| serde_json::json!({}))
-        {
-            serde_json::Value::Object(map) => map,
-            _ => serde_json::Map::new(),
-        };
-
-        if let serde_json::Value::Object(map) =
-            decode_cbor::<serde_json::Value>(&answers).unwrap_or_else(|_| serde_json::json!({}))
-        {
-            for (k, v) in map {
-                merged.insert(k, v);
-            }
+    fn apply_answers(mode: QaMode, current_config: Vec<u8>, answers: Vec<u8>) -> Vec<u8> {
+        if matches!(mode, QaMode::Remove) {
+            return encode_cbor(&serde_json::json!({}));
         }
-
-        encode_cbor(&serde_json::Value::Object(merged))
+        let merged = qa_apply_answers_json(&current_config, &answers);
+        encode_cbor(&merged)
     }
 }
 
@@ -200,12 +194,23 @@ impl component_i18n::Guest for Component {
         vec![
             "qa.default.title".to_string(),
             "qa.default.description".to_string(),
+            "qa.question.card_source.label".to_string(),
+            "qa.question.card_source.help".to_string(),
+            "qa.question.card_source.option.asset".to_string(),
+            "qa.question.card_source.option.inline".to_string(),
+            "qa.question.asset_path.label".to_string(),
+            "qa.question.asset_path.help".to_string(),
+            "qa.question.inline_card_json.label".to_string(),
+            "qa.question.inline_card_json.help".to_string(),
+            "qa.question.i18n_locale.label".to_string(),
+            "qa.question.i18n_locale.help".to_string(),
             "qa.setup.title".to_string(),
             "qa.setup.description".to_string(),
             "qa.update.title".to_string(),
             "qa.update.description".to_string(),
             "qa.remove.title".to_string(),
             "qa.remove.description".to_string(),
+            "adaptive_card.default.title".to_string(),
         ]
     }
 }
@@ -389,6 +394,176 @@ fn run_component_cbor(input: Vec<u8>, _state: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
     let parsed: serde_json::Value =
         serde_json::from_str(&output_json).unwrap_or_else(|_| serde_json::json!({}));
     (encode_cbor(&parsed), encode_cbor(&serde_json::json!({})))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn qa_card_questions() -> Vec<Question> {
+    vec![
+        Question {
+            id: "card_source".to_string(),
+            label: I18nText::new("qa.question.card_source.label", None),
+            help: Some(I18nText::new("qa.question.card_source.help", None)),
+            error: None,
+            kind: QuestionKind::Choice {
+                options: vec![
+                    ChoiceOption {
+                        value: "asset".to_string(),
+                        label: I18nText::new("qa.question.card_source.option.asset", None),
+                    },
+                    ChoiceOption {
+                        value: "inline".to_string(),
+                        label: I18nText::new("qa.question.card_source.option.inline", None),
+                    },
+                ],
+            },
+            required: true,
+            default: None,
+        },
+        Question {
+            id: "asset_path".to_string(),
+            label: I18nText::new("qa.question.asset_path.label", None),
+            help: Some(I18nText::new("qa.question.asset_path.help", None)),
+            error: None,
+            kind: QuestionKind::Text,
+            required: false,
+            default: None,
+        },
+        Question {
+            id: "inline_card_json".to_string(),
+            label: I18nText::new("qa.question.inline_card_json.label", None),
+            help: Some(I18nText::new("qa.question.inline_card_json.help", None)),
+            error: None,
+            kind: QuestionKind::Text,
+            required: false,
+            default: None,
+        },
+        Question {
+            id: "i18n_locale".to_string(),
+            label: I18nText::new("qa.question.i18n_locale.label", None),
+            help: Some(I18nText::new("qa.question.i18n_locale.help", None)),
+            error: None,
+            kind: QuestionKind::Text,
+            required: false,
+            default: None,
+        },
+    ]
+}
+
+fn qa_apply_answers_json(current_config: &[u8], answers: &[u8]) -> serde_json::Value {
+    let mut merged = match decode_cbor::<serde_json::Value>(current_config)
+        .unwrap_or_else(|_| serde_json::json!({}))
+    {
+        serde_json::Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+
+    let answer_map =
+        match decode_cbor::<serde_json::Value>(answers).unwrap_or_else(|_| serde_json::json!({})) {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+
+    let selected_source = answer_map
+        .get("card_source")
+        .and_then(|v| v.as_str())
+        .or_else(|| merged.get("card_source").and_then(|v| v.as_str()))
+        .unwrap_or("asset");
+
+    let mut card_spec = merged
+        .get("card_spec")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    if selected_source.eq_ignore_ascii_case("inline") {
+        let inline_json = resolve_inline_card_json(answer_map.get("inline_card_json"), &card_spec);
+        card_spec.insert("inline_json".to_string(), inline_json);
+        card_spec.remove("asset_path");
+        card_spec.remove("catalog_name");
+    } else {
+        let asset_path = answer_map
+            .get("asset_path")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                card_spec
+                    .get("asset_path")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| "card.json".to_string());
+        card_spec.insert(
+            "asset_path".to_string(),
+            serde_json::Value::String(asset_path),
+        );
+        card_spec.remove("inline_json");
+        card_spec.remove("catalog_name");
+    }
+
+    merged.insert(
+        "card_source".to_string(),
+        serde_json::Value::String(if selected_source.eq_ignore_ascii_case("inline") {
+            "inline".to_string()
+        } else {
+            "asset".to_string()
+        }),
+    );
+    merged.insert(
+        "card_spec".to_string(),
+        serde_json::Value::Object(card_spec),
+    );
+    merged
+        .entry("mode".to_string())
+        .or_insert_with(|| serde_json::Value::String("renderAndValidate".to_string()));
+    if let Some(locale) = answer_map
+        .get("i18n_locale")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        merged.insert(
+            "i18n_locale".to_string(),
+            serde_json::Value::String(locale.to_string()),
+        );
+    }
+
+    serde_json::Value::Object(merged)
+}
+
+fn resolve_inline_card_json(
+    answer: Option<&serde_json::Value>,
+    existing_card_spec: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    if let Some(value) = answer {
+        if let Some(raw) = value.as_str() {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw)
+                && (parsed.is_object() || parsed.is_array())
+            {
+                return parsed;
+            }
+        } else if value.is_object() || value.is_array() {
+            return value.clone();
+        }
+    }
+
+    if let Some(existing) = existing_card_spec.get("inline_json")
+        && (existing.is_object() || existing.is_array())
+    {
+        return existing.clone();
+    }
+
+    serde_json::json!({
+        "type": "AdaptiveCard",
+        "version": "1.6",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "{{i18n:adaptive_card.default.title}}"
+            }
+        ]
+    })
 }
 
 pub fn handle_message(operation: &str, input: &str) -> String {
@@ -879,5 +1054,38 @@ mod debug_tests {
         });
         let invocation = parse_invocation_value(&input).expect("should parse");
         println!("payload: {}", invocation.payload);
+    }
+
+    #[test]
+    fn qa_apply_answers_builds_asset_invocation() {
+        let answers = encode_cbor(&json!({
+            "card_source": "asset",
+            "asset_path": "assets/cards/welcome.json",
+            "i18n_locale": "en-GB"
+        }));
+
+        let merged = qa_apply_answers_json(&encode_cbor(&json!({})), &answers);
+        assert_eq!(merged["card_source"], "asset");
+        assert_eq!(
+            merged["card_spec"]["asset_path"],
+            "assets/cards/welcome.json"
+        );
+        assert_eq!(merged["i18n_locale"], "en-GB");
+        assert_eq!(merged["mode"], "renderAndValidate");
+    }
+
+    #[test]
+    fn qa_apply_answers_falls_back_to_i18n_inline_template() {
+        let answers = encode_cbor(&json!({
+            "card_source": "inline",
+            "inline_card_json": "not-json"
+        }));
+
+        let merged = qa_apply_answers_json(&encode_cbor(&json!({})), &answers);
+        assert_eq!(merged["card_source"], "inline");
+        assert_eq!(
+            merged["card_spec"]["inline_json"]["body"][0]["text"],
+            "{{i18n:adaptive_card.default.title}}"
+        );
     }
 }
